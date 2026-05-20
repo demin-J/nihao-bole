@@ -14,7 +14,7 @@
         <strong>小白两步即可使用：</strong>
         <ol>
           <li>打开你分享的链接</li>
-          <li>选择千问/Kimi，填自己的 API Key，点击「开始评估」</li>
+          <li>选择千问/Kimi/DeepSeek，填自己的 API Key，点击「开始评估」</li>
         </ol>
       </div>
       <div class="status-wrap">
@@ -32,6 +32,7 @@
             <select id="provider" name="provider">
               <option value="qwen">千问（Qwen）</option>
               <option value="kimi">Kimi</option>
+              <option value="deepseek">DeepSeek</option>
             </select>
             <small id="providerHint">推荐新手先用默认服务商和默认模型。</small>
           </label>
@@ -41,14 +42,29 @@
             <input id="apiKey" name="apiKey" type="password" placeholder="请输入你自己的 API Key" required />
           </label>
 
-          <details>
-            <summary>高级选项（一般不用改）</summary>
-            <label class="inner-label">
-              模型名（可选）
-              <input id="modelId" name="modelId" type="text" placeholder="例如：qwen-plus / moonshot-v1-8k" />
-              <small id="modelHint">不填将使用对应服务商默认模型。</small>
-            </label>
-          </details>
+          <label>
+            模型选择
+            <select id="modelPreset"></select>
+            <small id="modelHint">建议先使用默认模型。</small>
+          </label>
+
+          <label id="customModelWrap" class="hidden">
+            自定义模型名（仅在选择“自定义模型”时填写）
+            <input id="customModelInput" type="text" placeholder="例如：qwen-max / moonshot-v1-32k / deepseek-reasoner" />
+          </label>
+          <input id="modelId" name="modelId" type="hidden" />
+
+          <label>
+            岗位/JD 模板（可选）
+            <select id="jdPreset">
+              <option value="">手动填写（不套用）</option>
+              <option value="recent">最近一次填写</option>
+              <option value="backend">后端工程师（Java/Go）</option>
+              <option value="frontend">前端工程师（Web）</option>
+              <option value="product">产品经理（B端）</option>
+            </select>
+            <small id="jdPresetHint">选择后会自动填充岗位与 JD，你仍可手动修改。</small>
+          </label>
 
           <label>
             岗位名称

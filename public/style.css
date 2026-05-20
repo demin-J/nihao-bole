@@ -119,6 +119,10 @@ summary {
   margin-top: 8px;
 }
 
+.hidden {
+  display: none;
+}
+
 input,
 select,
 textarea,

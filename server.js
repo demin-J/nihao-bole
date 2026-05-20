@@ -24,7 +24,15 @@ const PROVIDERS = {
     endpoint: "https://api.moonshot.cn/v1/chat/completions",
     defaultModel: "moonshot-v1-8k",
   },
+  deepseek: {
+    name: "DeepSeek",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    defaultModel: "deepseek-chat",
+  },
 };
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 3;
+const REQUEST_TIMEOUT_MS = 90_000;
 
 const app = express();
 const upload = multer({ dest: path.join(__dirname, "uploads") });
@@ -50,7 +58,7 @@ app.post("/api/evaluate", upload.array("resumeFiles", 10), async (req, res) => {
   const providerConfig = PROVIDERS[String(provider)];
   if (!providerConfig) {
     await cleanupUploads(files);
-    return res.status(400).json({ error: "provider 仅支持 qwen 或 kimi。" });
+    return res.status(400).json({ error: "provider 仅支持 qwen、kimi 或 deepseek。" });
   }
   if (!apiKey) {
     await cleanupUploads(files);
@@ -237,26 +245,46 @@ async function callModel({ providerConfig, apiKey, modelId, prompt }) {
     ],
     temperature: 0.2,
   };
-  const response = await fetch(providerConfig.endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
+    const response = await fetch(providerConfig.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`${providerConfig.name} 调用失败（${response.status}）：${trimErrorBody(errText)}`);
+    if (!response.ok) {
+      const errText = await response.text();
+      const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"), attempt);
+      const limitHint = response.status === 429 ? "（可能触发频率或额度限制）" : "";
+
+      if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_RETRIES) {
+        await sleep(retryAfterMs);
+        continue;
+      }
+
+      throw new Error(
+        `${providerConfig.name} 调用失败（${response.status}）${limitHint}：${trimErrorBody(errText)}`
+      );
+    }
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) {
+      if (attempt < MAX_RETRIES) {
+        await sleep(1200 * attempt);
+        continue;
+      }
+      throw new Error(`${providerConfig.name} 返回为空，请重试。`);
+    }
+
+    return normalizeModelContent(content);
   }
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error(`${providerConfig.name} 返回为空，请重试。`);
-  }
-  return normalizeModelContent(content);
+  throw new Error(`${providerConfig.name} 调用失败：多次重试后仍未成功。`);
 }
 
 function normalizeModelContent(content) {
@@ -286,6 +314,19 @@ function trimErrorBody(errorBody) {
     return "无详细错误信息";
   }
   return text.length > 240 ? `${text.slice(0, 240)}...` : text;
+}
+
+function parseRetryAfterMs(retryAfterHeader, attempt) {
+  const raw = String(retryAfterHeader || "").trim();
+  if (/^\d+$/.test(raw)) {
+    return Math.max(1000, Math.min(60_000, Number(raw) * 1000));
+  }
+  // 指数退避 + 上限，尽量避开 429 窗口
+  return Math.min(12_000, 1500 * 2 ** (attempt - 1));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function cleanupUploads(files) {
