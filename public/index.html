@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>你好伯乐 - 简历筛选 Agent</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>你好伯乐</h1>
+      <p>自动筛选候选人简历（岗位契合度 + 真实性 + 五维雷达 + 面试追问）</p>
+      <div class="quick-start">
+        <strong>小白两步即可使用：</strong>
+        <ol>
+          <li>打开你分享的链接</li>
+          <li>选择千问/Kimi，填自己的 API Key，点击「开始评估」</li>
+        </ol>
+      </div>
+      <div class="status-wrap">
+        <span id="healthDot" class="dot"></span>
+        <span id="healthText">服务连接中...</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>输入信息</h2>
+        <form id="evaluateForm">
+          <label>
+            模型服务商
+            <select id="provider" name="provider">
+              <option value="qwen">千问（Qwen）</option>
+              <option value="kimi">Kimi</option>
+            </select>
+            <small id="providerHint">推荐新手先用默认服务商和默认模型。</small>
+          </label>
+
+          <label>
+            API Key（必填，仅保存在你的浏览器本地，不会使用分享者的 Key）
+            <input id="apiKey" name="apiKey" type="password" placeholder="请输入你自己的 API Key" required />
+          </label>
+
+          <details>
+            <summary>高级选项（一般不用改）</summary>
+            <label class="inner-label">
+              模型名（可选）
+              <input id="modelId" name="modelId" type="text" placeholder="例如：qwen-plus / moonshot-v1-8k" />
+              <small id="modelHint">不填将使用对应服务商默认模型。</small>
+            </label>
+          </details>
+
+          <label>
+            岗位名称
+            <input id="jobTitle" name="jobTitle" type="text" required placeholder="例如：高级后端工程师" />
+          </label>
+
+          <label>
+            岗位 JD（文本）
+            <textarea id="jdText" name="jdText" rows="8" required placeholder="粘贴岗位职责与任职要求"></textarea>
+          </label>
+
+          <label>
+            简历文本（可多份，用 --- 分隔）
+            <textarea
+              id="resumeTextInput"
+              name="resumeTextInput"
+              rows="8"
+              placeholder="简历A内容&#10;---&#10;简历B内容"
+            ></textarea>
+          </label>
+
+          <label>
+            上传简历文件（支持 PDF / 图片，可多选）
+            <input id="resumeFiles" name="resumeFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp" />
+          </label>
+
+          <button id="submitBtn" type="submit">开始评估</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>评估结果</h2>
+        <div id="summary" class="summary muted">暂无结果</div>
+        <div id="cards"></div>
+      </section>
+    </main>
+
+    <template id="resultCardTemplate">
+      <article class="result-card">
+        <div class="result-head">
+          <h3 class="candidate"></h3>
+          <div class="score-line">
+            <span class="tier"></span>
+            <span class="score"></span>
+          </div>
+        </div>
+        <p class="conclusion"></p>
+        <div class="grid">
+          <div>
+            <h4>优劣势</h4>
+            <p class="subtitle">优势</p>
+            <ul class="strengths"></ul>
+            <p class="subtitle">劣势</p>
+            <ul class="weaknesses"></ul>
+          </div>
+          <div>
+            <h4>真实性评估</h4>
+            <ul class="auth-list"></ul>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas class="radar"></canvas>
+        </div>
+        <div class="concern-wrap">
+          <h4>核心顾虑（仅 60 分以上展示）</h4>
+          <ul class="concerns"></ul>
+          <h4>打消顾虑的面试问题</h4>
+          <ul class="questions"></ul>
+        </div>
+        <div class="reject-wrap">
+          <h4>淘汰理由</h4>
+          <ul class="reject-reasons"></ul>
+        </div>
+      </article>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
