@@ -230,6 +230,27 @@ function renderCards(results) {
     node.querySelector(".tier").textContent = item.fitTier;
     node.querySelector(".score").textContent = `${item.fitScore} 分`;
     node.querySelector(".conclusion").textContent = item.conclusion || "暂无结论";
+    const auditToggleBtn = node.querySelector(".audit-toggle-btn");
+    const auditBlock = node.querySelector(".audit-block");
+    const auditGrid = node.querySelector(".audit-grid");
+    node.querySelector(".job-family").textContent = formatJobFamily(item.jobFamily);
+
+    const jdLines = [
+      `硬性要求：${toInlineText(item?.jdStructured?.hardRequirements)}`,
+      `关键职责：${toInlineText(item?.jdStructured?.keyResponsibilities)}`,
+      `加分项：${toInlineText(item?.jdStructured?.plusItems)}`,
+    ];
+    fillList(node.querySelector(".jd-structured"), jdLines);
+
+    fillList(node.querySelector(".weight-breakdown"), buildWeightLines(item));
+    fillList(node.querySelector(".pro-common"), buildScoredItemLines(item?.professionalDetail?.commonItems));
+    fillList(node.querySelector(".pro-specialized"), buildScoredItemLines(item?.professionalDetail?.specializedItems));
+    auditToggleBtn.addEventListener("click", () => {
+      const expanded = !auditBlock.classList.contains("hidden");
+      auditBlock.classList.toggle("hidden", expanded);
+      auditGrid.classList.toggle("hidden", expanded);
+      auditToggleBtn.textContent = expanded ? "查看评分依据" : "收起评分依据";
+    });
 
     fillList(node.querySelector(".strengths"), item.strengths);
     fillList(node.querySelector(".weaknesses"), item.weaknesses);
@@ -429,4 +450,51 @@ function readJsonStorage(key) {
   } catch {
     return {};
   }
+}
+
+function formatJobFamily(family) {
+  if (family === "A") return "A类：行政/职能支持";
+  if (family === "B") return "B类：通用业务岗";
+  if (family === "C") return "C类：技术/产品岗";
+  return "未识别岗位类别";
+}
+
+function toInlineText(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return "暂无";
+  }
+  return values.join("；");
+}
+
+function buildWeightLines(item) {
+  const weights = item?.weightBreakdown || {};
+  const lines = [
+    `专业度权重：${toPercent(weights.professionalismWeight, 30)}`,
+    `上手速度权重：${toPercent(weights.rampUpSpeedWeight, 30)}`,
+    `成长性权重：${toPercent(weights.growthWeight, 20)}`,
+    `价值观权重：${toPercent(weights.valuesWeight, 10)}`,
+    `稳定性权重：${toPercent(weights.stabilityWeight, 10)}`,
+  ];
+  if (Number.isFinite(Number(weights.calculatedFitScore))) {
+    lines.push(`加权计算总分：${Number(weights.calculatedFitScore)} 分`);
+  }
+  return lines;
+}
+
+function toPercent(value, fallbackPercent) {
+  const num = Number(value);
+  if (Number.isFinite(num) && num >= 0) {
+    return `${Math.round(num * 100)}%`;
+  }
+  return `${fallbackPercent}%`;
+}
+
+function buildScoredItemLines(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return ["暂无细分项（本次结果可能来自旧版规则）"];
+  }
+  return items.map((item) => {
+    const evidence = Array.isArray(item?.evidence) && item.evidence.length ? item.evidence.join("；") : "暂无证据";
+    return `${item?.name || "未命名"}：${Number(item?.score || 0)} 分；证据：${evidence}`;
+  });
 }

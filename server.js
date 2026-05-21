@@ -33,6 +33,13 @@ const PROVIDERS = {
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES = 3;
 const REQUEST_TIMEOUT_MS = 90_000;
+const DIMENSION_WEIGHTS = {
+  values: 0.1,
+  professionalism: 0.3,
+  growth: 0.2,
+  stability: 0.1,
+  rampUpSpeed: 0.3,
+};
 
 const app = express();
 const upload = multer({ dest: path.join(__dirname, "uploads") });
@@ -85,14 +92,13 @@ app.post("/api/evaluate", upload.array("resumeFiles", 10), async (req, res) => {
         resumeName: resume.name,
       });
 
-      const responseText = await callModel({
+      const parsed = await runEvaluationWithProcessGuard({
         providerConfig,
         apiKey: String(apiKey),
         modelId: modelId || providerConfig.defaultModel,
         prompt,
+        resumeName: resume.name,
       });
-
-      const parsed = normalizeEvaluation(parseJsonFromText(responseText || "{}"), resume.name);
       results.push(parsed);
     }
 
@@ -146,8 +152,16 @@ async function collectResumesFromInput(files, rawTextInput) {
 }
 
 function normalizeEvaluation(raw, resumeName) {
-  const fitScore = clampNumber(raw.fitScore, 0, 100, 0);
+  const dimensions = {
+    values: clampNumber(raw?.dimensions?.values, 0, 100, 0),
+    professionalism: clampNumber(raw?.dimensions?.professionalism, 0, 100, 0),
+    growth: clampNumber(raw?.dimensions?.growth, 0, 100, 0),
+    stability: clampNumber(raw?.dimensions?.stability, 0, 100, 0),
+    rampUpSpeed: clampNumber(raw?.dimensions?.rampUpSpeed, 0, 100, 0),
+  };
+  const weightedFitScore = computeWeightedFitScore(dimensions);
   const educationFraud = Boolean(raw?.authenticity?.educationCheck?.fraudSuspected);
+  const fitScore = educationFraud ? Math.min(weightedFitScore, 59) : weightedFitScore;
 
   let fitTier = raw.fitTier;
   if (educationFraud) {
@@ -163,7 +177,18 @@ function normalizeEvaluation(raw, resumeName) {
   return {
     candidateName: raw.candidateName || "未识别候选人",
     resumeName: raw.resumeName || resumeName,
-    fitScore: educationFraud ? Math.min(fitScore, 59) : fitScore,
+    jobFamily: normalizeJobFamily(raw.jobFamily),
+    jdStructured: normalizeJdStructured(raw.jdStructured),
+    professionalDetail: normalizeProfessionalDetail(raw.professionalDetail),
+    weightBreakdown: {
+      valuesWeight: DIMENSION_WEIGHTS.values,
+      professionalismWeight: DIMENSION_WEIGHTS.professionalism,
+      growthWeight: DIMENSION_WEIGHTS.growth,
+      stabilityWeight: DIMENSION_WEIGHTS.stability,
+      rampUpSpeedWeight: DIMENSION_WEIGHTS.rampUpSpeed,
+      calculatedFitScore: fitScore,
+    },
+    fitScore,
     fitTier,
     rejectReasons: Array.isArray(raw.rejectReasons) ? raw.rejectReasons.slice(0, 3) : [],
     authenticity: {
@@ -178,13 +203,7 @@ function normalizeEvaluation(raw, resumeName) {
         details: raw?.authenticity?.educationCheck?.details || "",
       },
     },
-    dimensions: {
-      values: clampNumber(raw?.dimensions?.values, 0, 100, 0),
-      professionalism: clampNumber(raw?.dimensions?.professionalism, 0, 100, 0),
-      growth: clampNumber(raw?.dimensions?.growth, 0, 100, 0),
-      stability: clampNumber(raw?.dimensions?.stability, 0, 100, 0),
-      rampUpSpeed: clampNumber(raw?.dimensions?.rampUpSpeed, 0, 100, 0),
-    },
+    dimensions,
     strengths: toStringArray(raw.strengths, 4),
     weaknesses: toStringArray(raw.weaknesses, 4),
     coreConcerns: fitScore >= 60 ? toStringArray(raw.coreConcerns, 2) : [],
@@ -226,8 +245,110 @@ function clampNumber(value, min, max, fallback) {
   return Math.min(Math.max(num, min), max);
 }
 
+function computeWeightedFitScore(dimensions) {
+  const weighted =
+    dimensions.values * DIMENSION_WEIGHTS.values +
+    dimensions.professionalism * DIMENSION_WEIGHTS.professionalism +
+    dimensions.growth * DIMENSION_WEIGHTS.growth +
+    dimensions.stability * DIMENSION_WEIGHTS.stability +
+    dimensions.rampUpSpeed * DIMENSION_WEIGHTS.rampUpSpeed;
+  return clampNumber(Math.round(weighted), 0, 100, 0);
+}
+
 function formatError(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeJobFamily(value) {
+  const family = String(value || "").trim().toUpperCase();
+  if (family === "A" || family === "B" || family === "C") {
+    return family;
+  }
+  return "C";
+}
+
+function normalizeJdStructured(value) {
+  return {
+    hardRequirements: toStringArray(value?.hardRequirements, 8),
+    keyResponsibilities: toStringArray(value?.keyResponsibilities, 8),
+    plusItems: toStringArray(value?.plusItems, 5),
+  };
+}
+
+function normalizeProfessionalDetail(value) {
+  return {
+    commonItems: normalizeScoredItems(value?.commonItems),
+    specializedItems: normalizeScoredItems(value?.specializedItems),
+    commonScore: clampNumber(value?.commonScore, 0, 100, 0),
+    specializedScore: clampNumber(value?.specializedScore, 0, 100, 0),
+    finalScore: clampNumber(value?.finalScore, 0, 100, 0),
+  };
+}
+
+function normalizeScoredItems(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => ({
+      name: String(item?.name || "").trim(),
+      score: clampNumber(item?.score, 0, 100, 0),
+      evidence: toStringArray(item?.evidence, 2),
+    }))
+    .filter((item) => item.name);
+}
+
+async function runEvaluationWithProcessGuard({ providerConfig, apiKey, modelId, prompt, resumeName }) {
+  const maxAttempts = 2;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const appendedPrompt =
+      attempt === 1
+        ? prompt
+        : `${prompt}\n\n【纠偏要求】上一次输出缺少流程字段。请严格补齐 jobFamily、jdStructured、professionalDetail 后重新输出完整 JSON。`;
+
+    try {
+      const responseText = await callModel({
+        providerConfig,
+        apiKey,
+        modelId,
+        prompt: appendedPrompt,
+      });
+      const raw = parseJsonFromText(responseText || "{}");
+      validateEvaluationProcess(raw);
+      return normalizeEvaluation(raw, resumeName);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    `评估流程校验未通过：${formatError(lastError)}。请稍后重试。`
+  );
+}
+
+function validateEvaluationProcess(raw) {
+  const family = normalizeJobFamily(raw?.jobFamily);
+  const hasFamily = family === "A" || family === "B" || family === "C";
+  const hardReqs = toStringArray(raw?.jdStructured?.hardRequirements, 8);
+  const keyResp = toStringArray(raw?.jdStructured?.keyResponsibilities, 8);
+  const hasJdStruct = hardReqs.length > 0 && keyResp.length > 0;
+  const hasProfessionalDetail =
+    raw?.professionalDetail &&
+    Number.isFinite(Number(raw?.professionalDetail?.commonScore)) &&
+    Number.isFinite(Number(raw?.professionalDetail?.specializedScore)) &&
+    Number.isFinite(Number(raw?.professionalDetail?.finalScore));
+  const hasDimensions =
+    Number.isFinite(Number(raw?.dimensions?.values)) &&
+    Number.isFinite(Number(raw?.dimensions?.professionalism)) &&
+    Number.isFinite(Number(raw?.dimensions?.growth)) &&
+    Number.isFinite(Number(raw?.dimensions?.stability)) &&
+    Number.isFinite(Number(raw?.dimensions?.rampUpSpeed));
+
+  if (!hasFamily || !hasJdStruct || !hasProfessionalDetail || !hasDimensions) {
+    throw new Error("模型未严格执行“先判岗+JD结构化，再打分”的流程。");
+  }
 }
 
 async function callModel({ providerConfig, apiKey, modelId, prompt }) {
